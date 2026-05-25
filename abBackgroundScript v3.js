@@ -4,12 +4,11 @@
 // @description  AB站背景更改油猴脚本第三代，重构架构，优化UI/性能/兼容性，支持远程图库接口。
 // @icon         http://github.smiku.site/sakura.png
 // @license      MIT
-// @version      3.0.2
+// @version      v3.0.3
 // @author       SakuraMikku
 // @copyright    2023-2099, SakuraMikku
 // @bilibili     https://space.bilibili.com/29058270
 // @github       https://github.com/wuxinTLH
-// @updateURL    https://github.com/wuxinTLH/abBackgroundScript-v3/blob/master/abBackgroundScript%20v3.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
 // @match        *www.bilibili.com/*
@@ -36,7 +35,7 @@
 // @exclude      *pay.bilibili.com/pay-v2-web*
 // ==/UserScript==
 
-;(function (global) {
+; (function (global) {
     "use strict";
 
     // ============================================================
@@ -46,35 +45,35 @@
     global.__SAKURA_BG_LOADED__ = true;
 
     // ============================================================
-    // CONFIG — 远程图库接口配置（预留，填写 url 后自动启用）
-    // 接口返回格式：{ "code": 0, "data": { "list": [{ "url": "...", "title": "..." }], "total": 100 } }
+    // CONFIG — 远程图库接口配置
+    // 接口返回格式：{ "code": 200, "msg": "success", "data": { "list": [{ "url": "...", "title": "..." }], "total": 6 } }
     // ============================================================
     var REMOTE_CONFIG = {
-        enabled:      false,   // 设为 true 启用远程图库
-        url:          "",      // 远程接口地址
-        cacheMinutes: 30,      // 本地缓存时长（分钟）
-        retryTimes:   2,       // 请求失败重试次数
-        retryDelay:   800,     // 重试基础间隔 ms（指数退避）
-        pageSize:     12,      // 每页图片数量
-        timeout:      8000,    // 请求超时 ms
+        enabled: true,                                                      // 已启用远程图库
+        url: "https://api1.node.syjx.space:30443/api/images/bg/imgs",  // 接口地址
+        cacheMinutes: 43200,      // 本地缓存时长（分钟）
+        retryTimes: 5,       // 请求失败重试次数
+        retryDelay: 1000,     // 重试基础间隔 ms（指数退避）
+        pageSize: 6,      // 每页图片数量（远程接口无分页参数，保留备用）
+        timeout: 8000,    // 请求超时 ms
     };
 
-    // 本地默认图库 —— 扩展至 6 张
+    // 本地兜底图库 —— 当远程接口 GET 失败时继续使用以下固定图片链接
     var DEFAULT_GALLERY = [
         { url: "https://picui.ogmua.cn/s1/2026/03/12/69b27894a3fb9.webp", title: "默认 1" },
         { url: "https://picui.ogmua.cn/s1/2026/03/12/69b27895c9ace.webp", title: "默认 2" },
         { url: "https://picui.ogmua.cn/s1/2026/03/12/69b2789652dda.webp", title: "默认 3" },
         { url: "https://picui.ogmua.cn/s1/2026/03/12/69b27896690ce.webp", title: "默认 4" },
-        { url: "https://picui.ogmua.cn/s1/2026/03/12/69b2789672e0f.webp",  title: "默认 5" },
-        { url: "https://picui.ogmua.cn/s1/2026/03/12/69b2789d06cea.webp",  title: "默认 6" },
+        { url: "https://picui.ogmua.cn/s1/2026/03/12/69b2789672e0f.webp", title: "默认 5" },
+        { url: "https://picui.ogmua.cn/s1/2026/03/12/69b2789d06cea.webp", title: "默认 6" },
     ];
 
     // 作者信息
     var AUTHOR = {
-        name:     "SakuraMikku",
+        name: "SakuraMikku",
         bilibili: "https://space.bilibili.com/29058270",
-        github:   "https://github.com/wuxinTLH",
-        qqGroup:  "793513923",
+        github: "https://github.com/wuxinTLH",
+        qqGroup: "793513923",
     };
 
     // ============================================================
@@ -133,27 +132,28 @@
             return d.toLocaleDateString() + " " + d.toLocaleTimeString();
         }
         return {
-            info:  function () { console.info.apply(console,  [PREFIX, ts()].concat(Array.prototype.slice.call(arguments))); },
-            warn:  function () { console.warn.apply(console,  [PREFIX, ts()].concat(Array.prototype.slice.call(arguments))); },
+            info: function () { console.info.apply(console, [PREFIX, ts()].concat(Array.prototype.slice.call(arguments))); },
+            warn: function () { console.warn.apply(console, [PREFIX, ts()].concat(Array.prototype.slice.call(arguments))); },
             error: function () { console.error.apply(console, [PREFIX, ts()].concat(Array.prototype.slice.call(arguments))); },
         };
     })();
 
     // ============================================================
-    // REMOTE GALLERY PROVIDER（预留向外请求接口）
+    // REMOTE GALLERY PROVIDER
+    // 支持远程图库接口，失败时返回 null，由调用方降级到 DEFAULT_GALLERY
+    // 接口响应：{ "code": 200, "msg": "success", "data": { "list": [...], "total": N } }
     // ============================================================
     var RemoteGalleryProvider = (function () {
-        var _cache     = null;
+        var _cache = null;
         var _cacheTime = 0;
 
         return {
             /**
              * 获取远程图库列表，内置缓存 + 指数退避重试
-             * @param {number} page
+             * GET 失败或数据格式不符时返回 null，调用方应降级到 DEFAULT_GALLERY
              * @returns {Promise<Array|null>}
              */
-            fetchList: async function (page) {
-                page = page || 1;
+            fetchList: async function () {
                 if (!REMOTE_CONFIG.enabled || !REMOTE_CONFIG.url) return null;
 
                 var now = Date.now();
@@ -166,23 +166,31 @@
                 while (attempt <= REMOTE_CONFIG.retryTimes) {
                     try {
                         var res = await fetchWithTimeout(
-                            REMOTE_CONFIG.url + "?page=" + page + "&pageSize=" + REMOTE_CONFIG.pageSize,
+                            REMOTE_CONFIG.url,
                             { method: "GET", headers: { "Accept": "application/json" } },
                             REMOTE_CONFIG.timeout
                         );
                         if (!res.ok) throw new Error("HTTP " + res.status);
                         var json = await res.json();
-                        if (json.code === 0 && Array.isArray(json.data && json.data.list)) {
-                            _cache = json.data.list;
+
+                        // *** 关键修改：接口 code 为 200（而非原脚本示例的 0）***
+                        if (json.code === 200 && json.data && Array.isArray(json.data.list) && json.data.list.length) {
+                            // 将接口字段统一映射为 { url, title }
+                            _cache = json.data.list.map(function (item) {
+                                return { url: item.url, title: item.title || item.name || "" };
+                            });
                             _cacheTime = now;
                             Logger.info("远程图库加载成功，共", _cache.length, "张");
                             return _cache;
                         }
-                        throw new Error("接口数据格式错误");
+                        throw new Error("接口数据格式错误或列表为空");
                     } catch (err) {
                         attempt++;
                         Logger.warn("远程图库请求失败（第" + attempt + "次）:", err.message || err);
-                        if (attempt > REMOTE_CONFIG.retryTimes) return null;
+                        if (attempt > REMOTE_CONFIG.retryTimes) {
+                            Logger.warn("远程图库全部重试失败，将使用本地默认图库");
+                            return null;  // 返回 null，让调用方降级到 DEFAULT_GALLERY
+                        }
                         // 指数退避
                         await sleep(REMOTE_CONFIG.retryDelay * Math.pow(2, attempt - 1));
                     }
@@ -191,7 +199,7 @@
             },
 
             clearCache: function () {
-                _cache     = null;
+                _cache = null;
                 _cacheTime = 0;
             }
         };
@@ -202,14 +210,14 @@
     // 降级链：IndexedDB → localStorage → sessionStorage → 内存
     // ============================================================
     var StorageModule = (function () {
-        var DB_NAME  = "SakuraBGv3";
+        var DB_NAME = "SakuraBGv3";
         var DB_STORE = "bgData";
-        var DB_VER   = 1;
-        var LS_KEY   = "SakuraBGv3_url";
-        var CHUNK    = 4 * 1024 * 1024; // 4MB 分片（留余量）
+        var DB_VER = 1;
+        var LS_KEY = "SakuraBGv3_url";
+        var CHUNK = 4 * 1024 * 1024; // 4MB 分片（留余量）
 
         var _memFallback = null;
-        var _dbPromise   = null; // 单例 DB 连接，避免重复 open
+        var _dbPromise = null; // 单例 DB 连接，避免重复 open
 
         // ---- IndexedDB ----
         function getDB() {
@@ -218,8 +226,8 @@
                 var idb = global.indexedDB || global.mozIndexedDB || global.webkitIndexedDB || global.msIndexedDB;
                 if (!idb) { _dbPromise = null; return reject(new Error("不支持 IndexedDB")); }
                 var req = idb.open(DB_NAME, DB_VER);
-                req.onerror        = function () { _dbPromise = null; reject(req.error); };
-                req.onblocked      = function () { _dbPromise = null; reject(new Error("IndexedDB 被阻塞")); };
+                req.onerror = function () { _dbPromise = null; reject(req.error); };
+                req.onblocked = function () { _dbPromise = null; reject(new Error("IndexedDB 被阻塞")); };
                 req.onupgradeneeded = function (e) {
                     var db = e.target.result;
                     if (!db.objectStoreNames.contains(DB_STORE)) {
@@ -236,22 +244,22 @@
             var chunks = [];
             for (var i = 0; i < url.length; i += CHUNK) chunks.push(url.slice(i, i + CHUNK));
             return new Promise(function (resolve, reject) {
-                var tx    = db.transaction([DB_STORE], "readwrite");
+                var tx = db.transaction([DB_STORE], "readwrite");
                 var store = tx.objectStore(DB_STORE);
                 store.clear(); // 先清空旧数据
                 chunks.forEach(function (c, idx) { store.add({ id: idx, data: c }); });
                 tx.oncomplete = resolve;
-                tx.onerror    = function () { reject(tx.error); };
+                tx.onerror = function () { reject(tx.error); };
             });
         }
 
         async function idbGet() {
             var db = await getDB();
             var result = await new Promise(function (resolve, reject) {
-                var tx  = db.transaction([DB_STORE], "readonly");
+                var tx = db.transaction([DB_STORE], "readonly");
                 var req = tx.objectStore(DB_STORE).getAll();
                 req.onsuccess = function () { resolve(req.result); };
-                req.onerror   = function () { reject(req.error); };
+                req.onerror = function () { reject(req.error); };
             });
             if (!result || !result.length) return null;
             // 按 id 排序再拼接，防止 getAll 顺序不一致
@@ -265,7 +273,7 @@
                 var tx = db.transaction([DB_STORE], "readwrite");
                 tx.objectStore(DB_STORE).clear();
                 tx.oncomplete = resolve;
-                tx.onerror    = function () { reject(tx.error); };
+                tx.onerror = function () { reject(tx.error); };
             });
         }
 
@@ -278,7 +286,7 @@
             try { return storage.getItem(LS_KEY); } catch (e) { return null; }
         }
         function tryStorageDel(storage) {
-            try { storage.removeItem(LS_KEY); } catch (e) {}
+            try { storage.removeItem(LS_KEY); } catch (e) { }
         }
 
         // ---- 公开 API ----
@@ -355,9 +363,9 @@
         var isAB = location.host.indexOf("bilibili.com") !== -1 ? "bili" : "acfun";
 
         // 按优先级排列的根节点选择器
-        var BILI_SELECTORS  = ["#app", "#i_cecream", ".p-relative main", "#main", "body"];
+        var BILI_SELECTORS = ["#app", "#i_cecream", ".p-relative main", "#main", "body"];
         var ACFUN_SELECTORS = [".home-main-content", ".search__main", "div.list-container",
-                               "#main", "#app .layout", "#ac-space", "body"];
+            "#main", "#app .layout", "#ac-space", "body"];
 
         /**
          * 选取最合适的背景容器
@@ -380,17 +388,17 @@
                 var img = new Image();
                 // 避免 CORS 报错影响判断
                 img.crossOrigin = "anonymous";
-                img.onload  = function () { resolve(url); };
+                img.onload = function () { resolve(url); };
                 img.onerror = function () { reject(new Error("预加载失败: " + url)); };
                 img.src = url;
             });
         }
 
         var BG_STYLE = {
-            backgroundRepeat:     "no-repeat",
-            backgroundPosition:   "center center",
+            backgroundRepeat: "no-repeat",
+            backgroundPosition: "center center",
             backgroundAttachment: "fixed",
-            backgroundSize:       "cover",
+            backgroundSize: "cover",
         };
 
         /**
@@ -418,7 +426,7 @@
                 // body 兜底（部分页面容器不满屏）
                 if (root !== document.body) {
                     document.body.style.backgroundImage = "url(" + url + ")";
-                    document.body.style.backgroundSize  = "cover";
+                    document.body.style.backgroundSize = "cover";
                     document.body.style.backgroundAttachment = "fixed";
                 }
 
@@ -605,20 +613,20 @@
         ].join("");
 
         // ---- 状态 ----
-        var _open      = false;
-        var _tab       = "gallery";
-        var _b64       = null;   // 本地文件 base64
-        var _toastTmr  = null;
+        var _open = false;
+        var _tab = "gallery";
+        var _b64 = null;   // 本地文件 base64
+        var _toastTmr = null;
         var _galleryLoaded = false;
 
         // ---- Toast ----
         function toast(msg, type, duration) {
-            type     = type     || "success";
+            type = type || "success";
             duration = duration || 2600;
             var el = $id("skbg-toast");
             if (!el) return;
             el.textContent = msg;
-            el.className   = "show " + type;
+            el.className = "show " + type;
             clearTimeout(_toastTmr);
             _toastTmr = setTimeout(function () { el.className = ""; }, duration);
         }
@@ -647,6 +655,7 @@
         }
 
         // ---- 图库渲染 ----
+        // 优先使用远程接口图库；GET 失败时自动降级到 DEFAULT_GALLERY（固定图片链接）
         async function renderGallery(forceRefresh) {
             var grid = $id("skbg-gallery-grid");
             var refreshBtn = $id("skbg-gallery-refresh");
@@ -659,12 +668,18 @@
             for (var s = 0; s < 6; s++) skeletons += '<div class="skbg-gi loading"></div>';
             grid.innerHTML = skeletons;
 
+            // 尝试拉取远程图库；失败时 remote === null，降级到 DEFAULT_GALLERY
             var list = DEFAULT_GALLERY;
-
             if (REMOTE_CONFIG.enabled && REMOTE_CONFIG.url) {
                 refreshBtn && (refreshBtn.style.display = "block");
-                var remote = await RemoteGalleryProvider.fetchList(1);
-                if (remote && remote.length) list = remote;
+                var remote = await RemoteGalleryProvider.fetchList();
+                if (remote && remote.length) {
+                    list = remote;
+                    Logger.info("图库：使用远程接口数据");
+                } else {
+                    Logger.warn("图库：远程接口失败，使用本地默认图库");
+                    toast("远程图库加载失败，已使用默认图库", "error", 3000);
+                }
             } else {
                 refreshBtn && (refreshBtn.style.display = "none");
             }
@@ -692,7 +707,7 @@
             // 事件委托
             grid.onclick = function (e) {
                 var item = e.target.closest ? e.target.closest(".skbg-gi")
-                         : (function (el) { while (el && !el.classList.contains("skbg-gi")) el = el.parentNode; return el; })(e.target);
+                    : (function (el) { while (el && !el.classList.contains("skbg-gi")) el = el.parentNode; return el; })(e.target);
                 if (!item) return;
                 applyAndSave(item.dataset.url);
             };
@@ -701,7 +716,7 @@
         // ---- Tab 切换 ----
         function switchTab(name) {
             _tab = name;
-            var tabs  = document.querySelectorAll(".skbg-tab");
+            var tabs = document.querySelectorAll(".skbg-tab");
             var panes = document.querySelectorAll(".skbg-pane");
             for (var i = 0; i < tabs.length; i++)
                 tabs[i].classList.toggle("active", tabs[i].dataset.tab === name);
@@ -721,7 +736,7 @@
             var reader = new FileReader();
             reader.onload = function (e) {
                 _b64 = e.target.result;
-                var prev    = $id("skbg-file-prev");
+                var prev = $id("skbg-file-prev");
                 var prevImg = prev && prev.querySelector("img");
                 if (prevImg) prevImg.src = _b64;
                 if (prev) prev.style.display = "block";
@@ -748,77 +763,77 @@
                 // 面板
                 '<div id="skbg-panel" role="dialog" aria-label="背景更换面板">',
 
-                  // 头部
-                  '<div id="skbg-header">',
-                  '  <span id="skbg-title">🌸 背景更换</span>',
-                  '  <button id="skbg-close" aria-label="关闭">✕</button>',
-                  '</div>',
+                // 头部
+                '<div id="skbg-header">',
+                '  <span id="skbg-title">🌸 背景更换</span>',
+                '  <button id="skbg-close" aria-label="关闭">✕</button>',
+                '</div>',
 
-                  // 作者栏：bilibili + github 带 site icon
-                  '<div id="skbg-author-bar">',
-                  '  <a href="', AUTHOR.bilibili, '" target="_blank" rel="noopener" title="作者B站主页">',
-                  '    <img class="site-icon" src="https://www.bilibili.com/favicon.ico" alt="B站" onerror="this.style.display=\'none\'">',
-                  '    <span>@SakuraMikku</span>',
-                  '  </a>',
-                  '  <a href="', AUTHOR.github, '" target="_blank" rel="noopener" title="作者GitHub">',
-                  '    <img class="site-icon" src="https://github.com/favicon.ico" alt="GitHub" onerror="this.style.display=\'none\'">',
-                  '    <span>GitHub</span>',
-                  '  </a>',
-                  '</div>',
+                // 作者栏：bilibili + github 带 site icon
+                '<div id="skbg-author-bar">',
+                '  <a href="', AUTHOR.bilibili, '" target="_blank" rel="noopener" title="作者B站主页">',
+                '    <img class="site-icon" src="https://www.bilibili.com/favicon.ico" alt="B站" onerror="this.style.display=\'none\'">',
+                '    <span>@SakuraMikku</span>',
+                '  </a>',
+                '  <a href="', AUTHOR.github, '" target="_blank" rel="noopener" title="作者GitHub">',
+                '    <img class="site-icon" src="https://github.com/favicon.ico" alt="GitHub" onerror="this.style.display=\'none\'">',
+                '    <span>GitHub</span>',
+                '  </a>',
+                '</div>',
 
-                  // Tab 栏
-                  '<div id="skbg-tabs" role="tablist">',
-                  '  <div class="skbg-tab active" role="tab" data-tab="gallery">图库</div>',
-                  '  <div class="skbg-tab" role="tab" data-tab="url">链接</div>',
-                  '  <div class="skbg-tab" role="tab" data-tab="local">本地</div>',
-                  '  <div class="skbg-tab" role="tab" data-tab="settings">设置</div>',
-                  '</div>',
+                // Tab 栏
+                '<div id="skbg-tabs" role="tablist">',
+                '  <div class="skbg-tab active" role="tab" data-tab="gallery">图库</div>',
+                '  <div class="skbg-tab" role="tab" data-tab="url">链接</div>',
+                '  <div class="skbg-tab" role="tab" data-tab="local">本地</div>',
+                '  <div class="skbg-tab" role="tab" data-tab="settings">设置</div>',
+                '</div>',
 
-                  // 内容区
-                  '<div id="skbg-content">',
+                // 内容区
+                '<div id="skbg-content">',
 
-                    // 图库
-                    '<div id="skbg-pane-gallery" class="skbg-pane active" role="tabpanel">',
-                    '  <div id="skbg-gallery-grid"></div>',
-                    '  <button id="skbg-gallery-refresh" style="display:none">↻ 刷新远程图库</button>',
-                    '</div>',
+                // 图库
+                '<div id="skbg-pane-gallery" class="skbg-pane active" role="tabpanel">',
+                '  <div id="skbg-gallery-grid"></div>',
+                '  <button id="skbg-gallery-refresh" style="display:none">↻ 刷新远程图库</button>',
+                '</div>',
 
-                    // URL
-                    '<div id="skbg-pane-url" class="skbg-pane" role="tabpanel">',
-                    '  <div class="skbg-lbl">输入图片地址</div>',
-                    '  <div class="skbg-row">',
-                    '    <input id="skbg-url-inp" class="skbg-input" type="url" placeholder="https://example.com/bg.jpg" autocomplete="off">',
-                    '  </div>',
-                    '  <button id="skbg-url-apply" class="skbg-btn" style="width:100%">应用背景</button>',
-                    '</div>',
+                // URL
+                '<div id="skbg-pane-url" class="skbg-pane" role="tabpanel">',
+                '  <div class="skbg-lbl">输入图片地址</div>',
+                '  <div class="skbg-row">',
+                '    <input id="skbg-url-inp" class="skbg-input" type="url" placeholder="https://example.com/bg.jpg" autocomplete="off">',
+                '  </div>',
+                '  <button id="skbg-url-apply" class="skbg-btn" style="width:100%">应用背景</button>',
+                '</div>',
 
-                    // 本地
-                    '<div id="skbg-pane-local" class="skbg-pane" role="tabpanel">',
-                    '  <div class="skbg-lbl">拖拽或选择图片</div>',
-                    '  <div id="skbg-drop">',
-                    '    <span class="di">🖼️</span>点击或拖拽图片至此',
-                    '    <input id="skbg-file-inp" type="file" accept="image/*">',
-                    '  </div>',
-                    '  <div id="skbg-file-prev"><img src="" alt="预览"></div>',
-                    '  <button id="skbg-local-apply" class="skbg-btn" style="width:100%;margin-top:10px;display:none">应用该图片</button>',
-                    '</div>',
+                // 本地
+                '<div id="skbg-pane-local" class="skbg-pane" role="tabpanel">',
+                '  <div class="skbg-lbl">拖拽或选择图片</div>',
+                '  <div id="skbg-drop">',
+                '    <span class="di">🖼️</span>点击或拖拽图片至此',
+                '    <input id="skbg-file-inp" type="file" accept="image/*">',
+                '  </div>',
+                '  <div id="skbg-file-prev"><img src="" alt="预览"></div>',
+                '  <button id="skbg-local-apply" class="skbg-btn" style="width:100%;margin-top:10px;display:none">应用该图片</button>',
+                '</div>',
 
-                    // 设置
-                    '<div id="skbg-pane-settings" class="skbg-pane" role="tabpanel">',
-                    '  <div class="skbg-lbl">当前背景预览</div>',
-                    '  <div id="skbg-cur-prev">暂无背景</div>',
-                    '  <button id="skbg-del-btn" class="skbg-btn danger" style="width:100%">清除背景存储</button>',
-                    '  <div class="skbg-lbl" style="margin-top:14px">关于</div>',
-                    '  <div class="skbg-about">',
-                    '    <strong>SakuraBG v3.1</strong> &nbsp;·&nbsp; 作者 <a href="', AUTHOR.bilibili, '" target="_blank">SakuraMikku</a><br>',
-                    '    <a href="', AUTHOR.github, '" target="_blank">GitHub 源码</a> &nbsp;·&nbsp; QQ群：', AUTHOR.qqGroup, '<br>',
-                    '    当前网站：', escHtml(location.host), '<br>',
-                    '    存储：IndexedDB → localStorage → 内存',
-                    '  </div>',
-                    '  <button id="skbg-help-btn" class="skbg-btn secondary" style="width:100%;margin-top:10px">查看使用说明</button>',
-                    '</div>',
+                // 设置
+                '<div id="skbg-pane-settings" class="skbg-pane" role="tabpanel">',
+                '  <div class="skbg-lbl">当前背景预览</div>',
+                '  <div id="skbg-cur-prev">暂无背景</div>',
+                '  <button id="skbg-del-btn" class="skbg-btn danger" style="width:100%">清除背景存储</button>',
+                '  <div class="skbg-lbl" style="margin-top:14px">关于</div>',
+                '  <div class="skbg-about">',
+                '    <strong>SakuraBG v3.0.3</strong> &nbsp;·&nbsp; 作者 <a href="', AUTHOR.bilibili, '" target="_blank">SakuraMikku</a><br>',
+                '    <a href="', AUTHOR.github, '" target="_blank">GitHub 源码</a> &nbsp;·&nbsp; QQ群：', AUTHOR.qqGroup, '<br>',
+                '    当前网站：', escHtml(location.host), '<br>',
+                '    存储：IndexedDB → localStorage → 内存',
+                '  </div>',
+                '  <button id="skbg-help-btn" class="skbg-btn secondary" style="width:100%;margin-top:10px">查看使用说明</button>',
+                '</div>',
 
-                  '</div>', // #skbg-content
+                '</div>', // #skbg-content
                 '</div>',  // #skbg-panel
 
                 '<div id="skbg-toast" role="alert" aria-live="polite"></div>',
@@ -831,7 +846,7 @@
         function bindEvents() {
             // 触发按钮（同时支持键盘回车/空格）
             var trigger = $id("skbg-trigger");
-            var panel   = $id("skbg-panel");
+            var panel = $id("skbg-panel");
 
             var hot = $id("skbg-hot");
 
@@ -861,7 +876,7 @@
             // Tab 切换（事件委托）
             $id("skbg-tabs").addEventListener("click", function (e) {
                 var tab = e.target.closest ? e.target.closest(".skbg-tab")
-                        : (function (el) { while (el && !el.classList.contains("skbg-tab")) el = el.parentNode; return el; })(e.target);
+                    : (function (el) { while (el && !el.classList.contains("skbg-tab")) el = el.parentNode; return el; })(e.target);
                 if (tab && tab.dataset.tab) switchTab(tab.dataset.tab);
             });
 
@@ -878,8 +893,8 @@
             // 拖拽上传
             var drop = $id("skbg-drop");
             drop.addEventListener("click", function () { $id("skbg-file-inp").click(); });
-            drop.addEventListener("dragover",  function (e) { e.preventDefault(); drop.classList.add("dragover"); });
-            drop.addEventListener("dragleave", function ()  { drop.classList.remove("dragover"); });
+            drop.addEventListener("dragover", function (e) { e.preventDefault(); drop.classList.add("dragover"); });
+            drop.addEventListener("dragleave", function () { drop.classList.remove("dragover"); });
             drop.addEventListener("dragenter", function (e) { e.preventDefault(); });
             drop.addEventListener("drop", function (e) {
                 e.preventDefault(); drop.classList.remove("dragover");
@@ -943,9 +958,9 @@
                 buildHTML();
                 bindEvents();
             },
-            toast:         toast,
+            toast: toast,
             updatePreview: updatePreview,
-            applyAndSave:  applyAndSave,
+            applyAndSave: applyAndSave,
         };
     })();
 
@@ -971,8 +986,26 @@
                 showWelcome();
 
                 // 恢复上次背景
-                var saved   = await StorageModule.load();
-                var initUrl = saved || DEFAULT_GALLERY[0].url;
+                var saved = await StorageModule.load();
+                var initUrl = saved || null;
+
+                // 若无已存背景，尝试从远程接口获取第一张作为默认背景
+                // 远程失败则降级到 DEFAULT_GALLERY[0]（原有固定图片链接）
+                if (!initUrl) {
+                    if (REMOTE_CONFIG.enabled && REMOTE_CONFIG.url) {
+                        var remoteList = await RemoteGalleryProvider.fetchList();
+                        if (remoteList && remoteList.length) {
+                            initUrl = remoteList[0].url;
+                            Logger.info("启动：使用远程接口第一张图作为默认背景");
+                        } else {
+                            initUrl = DEFAULT_GALLERY[0].url;
+                            Logger.warn("启动：远程接口失败，使用本地默认图库第一张");
+                        }
+                    } else {
+                        initUrl = DEFAULT_GALLERY[0].url;
+                    }
+                }
+
                 await BackgroundModule.apply(initUrl);
                 UIModule.updatePreview(initUrl);
 
