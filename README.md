@@ -1,7 +1,7 @@
 # 🌸 SakuraBG — AB站网页背景更改脚本 v3
 
 > 声明：代码根据二代脚本修改，v3代码由Claude sonnet 4.6生成
-> 
+
 <p align="center">
   <img src="https://pic.syjx.space:30443/i/2026/04/20/69e62fadd1529.png" width="80" alt="SakuraBG Logo">
 </p>
@@ -33,8 +33,8 @@
 
 ## 功能特性 / Features
 
-| 功能       | 说明                                                     |
-| ---------- | -------------------------------------------------------- |
+| 功能        | 说明                                                     |
+| ----------- | -------------------------------------------------------- |
 | 🖼️ 内置图库 | 6 张预设背景图，点击一键应用                             |
 | 🔗 URL 输入 | 粘贴任意图片链接，支持回车快捷键                         |
 | 📁 本地上传 | 拖拽或点击上传本地图片，自动转 Base64                    |
@@ -73,13 +73,13 @@
 
 ```javascript
 var REMOTE_CONFIG = {
-    enabled:      true,                        // 设为 true 启用
-    url:          "https://your-api.com/list", // 接口地址
-    cacheMinutes: 30,                          // 缓存时长（分钟）
-    retryTimes:   2,                           // 失败重试次数
-    retryDelay:   800,                         // 重试间隔基数（ms，指数退避）
-    pageSize:     12,                          // 每页图片数量
-    timeout:      8000,                        // 请求超时（ms）
+  enabled: true, // 设为 true 启用
+  url: "https://your-api.com/list", // 接口地址
+  cacheMinutes: 30, // 缓存时长（分钟）
+  retryTimes: 2, // 失败重试次数
+  retryDelay: 800, // 重试间隔基数（ms，指数退避）
+  pageSize: 12, // 每页图片数量
+  timeout: 8000, // 请求超时（ms）
 };
 ```
 
@@ -116,8 +116,8 @@ sessionStorage（刷新后失效）
 
 ## 兼容性 / Compatibility
 
-| 浏览器      | 支持                                  |
-| ----------- | ------------------------------------- |
+| 浏览器      | 支持                                   |
+| ----------- | -------------------------------------- |
 | Chrome 80+  | ✅                                     |
 | Firefox 75+ | ✅                                     |
 | Edge 80+    | ✅                                     |
@@ -128,10 +128,67 @@ sessionStorage（刷新后失效）
 
 ## 版本历史 / Changelog
 
+### v3.0.4
+
+**重大架构修改，解决多个根本性问题：**
+
+#### 🔴 修复：B站个人空间页 `.space-header` 被覆盖
+
+- **根因**：旧方案在 `main.space-main` 内注入 `position:fixed` 背景 div，但 `position:fixed` 突破了容器边界，覆盖整个视口，导致 `.space-header`（bilibili 个人 banner 区）也被我们的背景图替换
+- **修复**：改为 CSS 规则直接给 `main.space-main` 设置 `background-image`。CSS 选择器天然只作用于匹配元素自身区域，`.space-header`（兄弟元素）完全不受影响
+
+#### 🔴 修复：Vue 重置 style 属性后背景消失
+
+- **根因**：`ChainTransparifier` 仅监听 `childList`（新节点插入），Vue 直接修改 `el.style.backgroundColor` 不会触发 childList 事件
+- **修复**：为每个被透明化的元素额外挂载 `attributeFilter:["style"]` 的 `MutationObserver`，style 属性变化时立即重新透明化（per-element style guard）
+
+#### 🔴 修复：`_done` WeakSet 阻断导致 Vue 重置后无法恢复
+
+- **根因**：旧版 `WeakSet._done` 标记"已处理"元素，Vue 重置后检查 `_done.has(el)` 为 true，跳过重新透明化
+- **修复**：移除 `_done` 阻断，每次都通过 `getComputedStyle` 检查实际状态（幂等操作）
+
+#### 🟡 修复：强制白色背景破坏深色模式
+
+- 移除 `opaqueSelectors` CSS 块中的 `background-color: #fff !important`
+- 导航栏/分类栏颜色完全由自身 CSS 控制，深色模式保持原样
+
+#### 🟡 修复：`background-image: none` 删除 Banner 图
+
+- 移除所有 `background-image: none` 规则（仅保留 `body` 级别的清除）
+- B站首页推广 banner、空间页个人封面完整保留
+
+#### 🟡 修复：`z-index: 100` 阻挡动态弹窗
+
+- 彻底移除 opaqueSelectors 上的 z-index 强制注入
+
+#### ✨ 新增：AlphaGuard 智能颜色恢复
+
+- 不再硬编码 `#fff`，按优先级自动推断：`lastGoodColor` > CSS规则颜色 > 背景图 > inline RGB > 白色兜底
+- 使用 `readCSSBg()` 临时移除 inline style 读取 CSS 规则层颜色（无视觉闪烁）
+
+#### ✨ 新增：ChainTransparifier 向上遍历算法
+
+- 从已知最深内容节点向上遍历到 `body`，自动发现并透明化所有未知类名的中间容器
+
+#### ✨ 新增：B站空间页双版本兼容
+
+- 新版（`main.space-main`）：CSS 规则直接生效，零延迟
+- 旧版（无 `main.space-main`）：500ms 后回退到 `#app` 注入（原 v3 方案）
+
+#### ✨ 新增：远程图库接口集成
+
+- 支持从 `https://api1.node.syjx.space:30443/api/images/bg/imgs` 拉取图库
+- 响应码 `200` 识别，指数退避重试，30 天本地缓存
+- 接口失败静默降级到本地默认图库
+
+---
+
 ### v3.0.3(26-5-25)
+
 - 新增默认图片获取功能
 
 ### v3.0.0 (2026)
+
 - 新增作者栏（B站 + GitHub 链接，带 favicon）
 - 默认图库从 4 张扩展至 **6 张**
 - 深度性能优化：DocumentFragment 批量 DOM 插入、单例 IndexedDB 连接、图片排序修复
