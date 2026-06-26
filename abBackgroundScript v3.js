@@ -956,7 +956,6 @@
             if (!url || url.indexOf("data:") === 0) return Promise.resolve(url);
             return new Promise(function (resolve, reject) {
                 var img = new Image();
-                img.crossOrigin = "anonymous";
                 img.onload = function () { resolve(url); };
                 img.onerror = function () { reject(new Error("preload fail")); };
                 img.src = url;
