@@ -11,14 +11,7 @@
 // @github       https://github.com/wuxinTLH
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
-// @match        *www.bilibili.com/*
 // @match        *://*.bilibili.com/*
-// @match        *message.bilibili.com/*
-// @match        *t.bilibili.com/*
-// @match        *manga.bilibili.com/*
-// @match        *live.bilibili.com/blackboard/*
-// @match        *www.bilibili.com/page-proxy/*
-// @match        *www.acfun.cn/*
 // @match        *.acfun.cn/*
 // @exclude      *live.bilibili.com/p/html/live-lottery/*
 // @exclude      *message.bilibili.com/pages/nav/index_new_pc_sync*
@@ -45,7 +38,7 @@
     // CONFIG
     // ============================================================
     var REMOTE_CONFIG = {
-        enabled: true,
+        enabled: false,
         url: "https://api1.node.syjx.space:30443/api/images/bg/imgs",
         cacheMinutes: 43200,
         retryTimes: 5,
@@ -94,120 +87,118 @@
      */
     var MIN_ALPHA = 0.85;
 
-    var SITE_CONFIG = (function () {
-        var host = location.host;
-        var path = location.pathname;
-
-        // ── B 站 ───────────────────────────────────────────────────
-        if (host.indexOf("bilibili.com") !== -1) {
-
-            // 空间页 space.bilibili.com
-            // DOM 层级：html → body → #app → [div.header.space-header (兄弟)] + main.space-main
-            //
-            // ★ 关键：.header.space-header 是 main.space-main 的【兄弟元素】，不是祖先/后代。
-            //   若在 html/body 上设置背景图，会穿透 .space-header 的透明区域，
-            //   把用户的 bilibili 个人 banner 覆盖掉。
-            //
-            // ✅ 正确方案：CSS 直接给 main.space-main 设置 background-image。
-            //   main.space-main 的背景只作用于自身区域，.space-header 完全不受影响。
-            //   新版页面（有 main.space-main）→ CSS 直接生效
-            //   旧版页面（无 main.space-main）→ SpacePageInjector 回退到 #app
-            if (host.indexOf("space.bilibili.com") !== -1) {
-                return {
-                    site: "bili",
-                    // 透明选择器：用于透明度滑块控制内容区白色遮罩
-                    // 注意：不包含 main.space-main（它由 buildCSS 直接设背景图）
-                    transparentSelectors: [
-                        "#app",
-                        ".space-page",
-                        ".s-upinfo",
-                        ".col-body",
-                        ".s-content",
-                    ],
-                    guardSelectors: [
-                        // AlphaGuard 防止 B站 JS 将 .space-header 背景色 alpha→0
-                        { selector: ".header.space-header" },
-                        { selector: ".space-header" },
-                    ],
-                    // ChainTransparifier 向上遍历锚点（处理未知中间容器）
-                    anchorSelectors: [".col-body", ".s-content", ".space-page"],
-                };
+    /**
+     * 站点配置注册表（OCP：新增站点/子页面只需追加条目，不修改匹配逻辑）
+     *
+     * 空间页特殊说明（space.bilibili.com）：
+     *   DOM 层级：html → body → #app → [div.header.space-header (兄弟)] + main.space-main
+     *   .header.space-header 是 main.space-main 的【兄弟元素】，不是祖先/后代。
+     *   若在 html/body 上设置背景图，会穿透 .space-header 的透明区域。
+     *   ✅ 正确方案：CSS 直接给 main.space-main 设置 background-image，
+     *      背景仅作用于内容区，.space-header 完全不受影响。
+     *   旧版页面（无 main.space-main）由 SpacePageInjector 回退处理。
+     */
+    var SITE_RULES = [
+        // ── B站：空间页 ──────────────────────────────────────────────
+        {
+            match: function (h) { return h.indexOf("space.bilibili.com") !== -1; },
+            config: {
+                site: "bili",
+                transparentSelectors: ["#app", ".space-page", ".s-upinfo", ".col-body", ".s-content"],
+                guardSelectors: [
+                    { selector: ".header.space-header" },
+                    { selector: ".space-header" },
+                ],
+                anchorSelectors: [".col-body", ".s-content", ".space-page"],
             }
-
-            // 直播页
-            if (host.indexOf("live.bilibili.com") !== -1) {
-                return {
-                    site: "bili",
-                    transparentSelectors: ["#app", ".live-room-app", ".room-container-box"],
-                    guardSelectors: [],
-                    anchorSelectors: ["#app"],
-                };
+        },
+        // ── B站：直播页 ──────────────────────────────────────────────
+        {
+            match: function (h) { return h.indexOf("live.bilibili.com") !== -1; },
+            config: {
+                site: "bili",
+                transparentSelectors: ["#app", ".live-room-app", ".room-container-box"],
+                guardSelectors: [],
+                anchorSelectors: ["#app"],
             }
-
-            // 视频页
-            if (path.indexOf("/video/") !== -1 || path.indexOf("/list/") !== -1) {
-                return {
-                    site: "bili",
-                    transparentSelectors: ["#app", "#mirror-vdcon", ".video-container-v1"],
-                    guardSelectors: [],
-                    anchorSelectors: ["#mirror-vdcon", "#app"],
-                };
+        },
+        // ── B站：视频页/列表页 ───────────────────────────────────────
+        {
+            match: function (h, p) { return p.indexOf("/video/") !== -1 || p.indexOf("/list/") !== -1; },
+            config: {
+                site: "bili",
+                transparentSelectors: ["#app", "#mirror-vdcon", ".video-container-v1"],
+                guardSelectors: [],
+                anchorSelectors: ["#mirror-vdcon", "#app"],
             }
-
-            // 搜索页
-            if (host.indexOf("search.bilibili.com") !== -1) {
-                return {
-                    site: "bili",
-                    transparentSelectors: ["#app", ".search-content", ".search-layout"],
-                    guardSelectors: [],
-                    anchorSelectors: [".search-content", "#app"],
-                };
+        },
+        // ── B站：搜索页 ──────────────────────────────────────────────
+        {
+            match: function (h) { return h.indexOf("search.bilibili.com") !== -1; },
+            config: {
+                site: "bili",
+                transparentSelectors: ["#app", ".search-content", ".search-layout"],
+                guardSelectors: [],
+                anchorSelectors: [".search-content", "#app"],
             }
-
-            // 首页及通用
-            return {
+        },
+        // ── B站：首页及通用 ─────────────────────────────────────────
+        {
+            match: function (h) { return h.indexOf("bilibili.com") !== -1; },
+            config: {
                 site: "bili",
                 transparentSelectors: ["#app", "#i_cecream", "#bili-feed4", ".recommended-container_floor-aside"],
                 guardSelectors: [],
                 anchorSelectors: ["#bili-feed4", "#app"],
-            };
-        }
-
-        // ── A 站 acfun.cn ──────────────────────────────────────────
-        if (host.indexOf("acfun.cn") !== -1) {
-
-            if (path.indexOf("/v/") !== -1 || path.indexOf("/video/") !== -1) {
-                return {
-                    site: "acfun",
-                    transparentSelectors: ["#app", ".ac-section", ".player-area"],
-                    guardSelectors: [{ selector: ".header" }, { selector: ".fixed-header" }],
-                    anchorSelectors: [".ac-section", "#app"],
-                };
             }
-
-            if (path.indexOf("/search") !== -1) {
-                return {
-                    site: "acfun",
-                    transparentSelectors: ["#app", ".search-content", ".search__main"],
-                    guardSelectors: [{ selector: ".header" }, { selector: ".fixed-header" }],
-                    anchorSelectors: [".search-content", "#app"],
-                };
+        },
+        // ── AcFun：视频页 ───────────────────────────────────────────
+        {
+            match: function (h, p) { return h.indexOf("acfun.cn") !== -1 && (p.indexOf("/v/") !== -1 || p.indexOf("/video/") !== -1); },
+            config: {
+                site: "acfun",
+                transparentSelectors: ["#app", ".ac-section", ".player-area"],
+                guardSelectors: [{ selector: ".header" }, { selector: ".fixed-header" }],
+                anchorSelectors: [".ac-section", "#app"],
             }
-
-            return {
+        },
+        // ── AcFun：搜索页 ───────────────────────────────────────────
+        {
+            match: function (h, p) { return h.indexOf("acfun.cn") !== -1 && p.indexOf("/search") !== -1; },
+            config: {
+                site: "acfun",
+                transparentSelectors: ["#app", ".search-content", ".search__main"],
+                guardSelectors: [{ selector: ".header" }, { selector: ".fixed-header" }],
+                anchorSelectors: [".search-content", "#app"],
+            }
+        },
+        // ── AcFun：首页及通用 ───────────────────────────────────────
+        {
+            match: function (h) { return h.indexOf("acfun.cn") !== -1; },
+            config: {
                 site: "acfun",
                 transparentSelectors: ["#app", ".home-main-content", ".list-container", ".channel-main"],
                 guardSelectors: [{ selector: ".header" }, { selector: ".fixed-header" }],
                 anchorSelectors: [".home-main-content", ".list-container", "#app"],
-            };
+            }
+        },
+        // ── 默认兜底 ────────────────────────────────────────────────
+        {
+            match: function () { return true; },
+            config: {
+                site: "unknown",
+                transparentSelectors: [],
+                guardSelectors: [],
+                anchorSelectors: [],
+            }
         }
+    ];
 
-        return {
-            site: "unknown",
-            transparentSelectors: [],
-            guardSelectors: [],
-            anchorSelectors: [],
-        };
+    var SITE_CONFIG = (function () {
+        var h = location.host, p = location.pathname;
+        for (var i = 0; i < SITE_RULES.length; i++) {
+            if (SITE_RULES[i].match(h, p)) return SITE_RULES[i].config;
+        }
     })();
 
     // ============================================================
@@ -218,7 +209,6 @@
     }
 
     function fetchWithTimeout(url, options, timeout) {
-        if (typeof AbortController === "undefined") return fetch(url, options);
         var ctrl = new AbortController();
         var timer = setTimeout(function () { ctrl.abort(); }, timeout);
         return fetch(url, Object.assign({}, options, { signal: ctrl.signal }))
@@ -235,19 +225,62 @@
 
     /**
      * 解析 CSS color 字符串 → [r, g, b, a]
-     * 注意：空串/"transparent" → [0,0,0,0]（符合 CSS 规范，transparent = rgba(0,0,0,0)）
+     * 输入源：getComputedStyle（总是 rgba）和 inline style（B站 JS 总是设 rgba）
+     * 空串/"transparent" → [0,0,0,0]（符合 CSS 规范，transparent = rgba(0,0,0,0)）
      */
     function parseColor(str) {
-        if (!str || str === "transparent" || str === "") return [0, 0, 0, 0];
-        str = str.trim();
+        if (!str || str === "transparent") return [0, 0, 0, 0];
         var m = str.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)/);
         if (m) return [+m[1], +m[2], +m[3], m[4] !== undefined ? +m[4] : 1];
-        m = str.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
-        if (m) return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16), 1];
-        m = str.match(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i);
-        if (m) return [parseInt(m[1] + m[1], 16), parseInt(m[2] + m[2], 16), parseInt(m[3] + m[3], 16), 1];
         return [0, 0, 0, 1];
     }
+
+    /**
+     * 兼容 Element.closest()（部分旧环境缺少此方法）
+     * @param {Element} el - 起始元素
+     * @param {string} selector - CSS 选择器
+     * @returns {Element|null}
+     */
+    function closest(el, selector) {
+        if (el.closest) return el.closest(selector);
+        while (el && el !== document.documentElement) {
+            if (el.matches && el.matches(selector)) return el;
+            el = el.parentElement;
+        }
+        return null;
+    }
+
+    /** 创建 WeakMap，自动处理不支持的环境 */
+    function createWeakMap() {
+        return typeof WeakMap !== "undefined" ? new WeakMap() : null;
+    }
+
+    /**
+     * 背景相关的 inline style 属性列表
+     * 用于 applyBgStyle / clearBgStyle 统一管理，消除重复
+     */
+    var BG_STYLE_PROPS = [
+        "background-image", "background-size", "background-position",
+        "background-attachment", "background-repeat"
+    ];
+
+    /** 对元素设置完整的背景 inline style（带 !important） */
+    function applyBgStyle(el, url) {
+        var escaped = url.replace(/'/g, "\\'");
+        el.style.setProperty("background-image", "url('" + escaped + "')", "important");
+        el.style.setProperty("background-size", "cover", "important");
+        el.style.setProperty("background-position", "center top", "important");
+        el.style.setProperty("background-attachment", "fixed", "important");
+        el.style.setProperty("background-repeat", "no-repeat", "important");
+    }
+
+    /** 清除元素的背景 inline style */
+    function clearBgStyle(el) {
+        BG_STYLE_PROPS.forEach(function (p) { el.style.removeProperty(p); });
+    }
+
+    /** ChainTransparifier 用于判断元素是否已"足够透明"的阈值 */
+    var ALPHA_TRANSPARENT_THRESHOLD = 0.05;
 
     // ============================================================
     // LOGGER
@@ -314,7 +347,7 @@
         function getDB() {
             if (_dbP) return _dbP;
             _dbP = new Promise(function (resolve, reject) {
-                var idb = global.indexedDB || global.mozIndexedDB || global.webkitIndexedDB;
+                var idb = global.indexedDB;
                 if (!idb) { _dbP = null; return reject(new Error("no IDB")); }
                 var r = idb.open(DB_NAME, DB_VER);
                 r.onerror = function () { _dbP = null; reject(r.error); };
@@ -408,7 +441,7 @@
      */
     var AlphaGuard = (function () {
         // WeakMap: element → { cssColor, cssImage, lastColor, lastImage, _fixing }
-        var _wMap = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+        var _wMap = createWeakMap();
         var _watchers = [];   // [{ el, observer }]
         var _rafId = null;
         var _rootObs = null;
@@ -485,42 +518,76 @@
                 info._fixing = false;
             }
 
-            var restoreColor = null;
-            var restoreImage = null;
             var cssAlpha = parseColor(info.cssColor)[3];
 
-            if (info.lastColor) {
-                // ① 最优：上次见过的不透明 inline 颜色（深/浅模式均正确）
-                var lc = parseColor(info.lastColor);
-                restoreColor = "rgba(" + lc[0] + "," + lc[1] + "," + lc[2] + ",1)";
-                if (info.lastImage && info.lastImage !== "none") restoreImage = info.lastImage;
+            /**
+             * 颜色恢复策略链（OCP：新增策略只需追加数组条目）
+             * 按优先级顺序执行，首个匹配的策略生效
+             */
+            var strategies = [
+                {
+                    name: "lastGoodColor",
+                    test: function () { return !!info.lastColor; },
+                    resolve: function () {
+                        var lc = parseColor(info.lastColor);
+                        return {
+                            color: "rgba(" + lc[0] + "," + lc[1] + "," + lc[2] + ",1)",
+                            image: (info.lastImage && info.lastImage !== "none") ? info.lastImage : null,
+                        };
+                    }
+                },
+                {
+                    name: "cssOpaqueColor",
+                    test: function () { return cssAlpha >= MIN_ALPHA; },
+                    resolve: function () {
+                        return {
+                            color: info.cssColor,
+                            image: (info.cssImage && info.cssImage !== "none") ? info.cssImage : null,
+                        };
+                    }
+                },
+                {
+                    name: "cssBackgroundImage",
+                    test: function () { return !!(info.cssImage && info.cssImage !== "none"); },
+                    resolve: function () {
+                        return { color: null, image: info.cssImage };
+                    }
+                },
+                {
+                    name: "inlineRgbFallback",
+                    test: function () { return parts[0] + parts[1] + parts[2] > 0; },
+                    resolve: function () {
+                        return {
+                            color: "rgba(" + parts[0] + "," + parts[1] + "," + parts[2] + ",1)",
+                            image: null,
+                        };
+                    }
+                },
+                {
+                    name: "rereadCssOrWhite",
+                    test: function () { return true; },
+                    resolve: function () {
+                        // 重新读取 CSS（应对时序问题）
+                        info._fixing = true;
+                        var css2 = readCSSBg(el);
+                        info._fixing = false;
+                        var cp = parseColor(css2.color || "");
+                        if (cp[3] >= MIN_ALPHA || cp[0] + cp[1] + cp[2] > 0) {
+                            return { color: css2.color, image: null };
+                        }
+                        return { color: "rgba(255,255,255,1)", image: null };
+                    }
+                }
+            ];
 
-            } else if (cssAlpha >= MIN_ALPHA) {
-                // ② CSS 规则定义了不透明颜色（无论深色/浅色主题）
-                restoreColor = info.cssColor;
-                if (info.cssImage && info.cssImage !== "none") restoreImage = info.cssImage;
-
-            } else if (info.cssImage && info.cssImage !== "none") {
-                // ③ CSS 有背景图（透明色是为了让图片显示，我们只需恢复图片）
-                // 不修改颜色，只确保图片存在
-                restoreImage = info.cssImage;
-
-            } else if (parts[0] + parts[1] + parts[2] > 0) {
-                // ④ 滚动渐变模式：rgba(R,G,B,0) 中的 RGB 就是目标色，强制 alpha→1
-                // 适用于 B站 space-header: rgba(255,255,255,0) → rgba(255,255,255,1)
-                restoreColor = "rgba(" + parts[0] + "," + parts[1] + "," + parts[2] + ",1)";
-
-            } else {
-                // ⑤ rgba(0,0,0,0) 且 CSS 也透明：再读一次 CSS（应对时序问题）
-                info._fixing = true;
-                var css2 = readCSSBg(el);
-                info._fixing = false;
-                var cp = parseColor(css2.color || "");
-                if (cp[3] >= MIN_ALPHA || cp[0] + cp[1] + cp[2] > 0) {
-                    restoreColor = css2.color;
-                } else {
-                    // 终极兜底：白色（此情况极少出现）
-                    restoreColor = "rgba(255,255,255,1)";
+            var restoreColor = null;
+            var restoreImage = null;
+            for (var si = 0; si < strategies.length; si++) {
+                if (strategies[si].test()) {
+                    var result = strategies[si].resolve();
+                    restoreColor = result.color;
+                    restoreImage = result.image;
+                    break;
                 }
             }
 
@@ -539,16 +606,18 @@
             }
             fixElement(el); // 立即修复一次
 
+            var w = { el: el, observer: null, _dirty: false, _stale: false };
             var obs = new MutationObserver(function (mutations) {
                 for (var j = 0; j < mutations.length; j++) {
                     if (mutations[j].attributeName === "style") {
-                        fixElement(el);
+                        w._dirty = true; // 标记脏，下一帧处理
                         break;
                     }
                 }
             });
             obs.observe(el, { attributes: true, attributeFilter: ["style"] });
-            _watchers.push({ el: el, observer: obs });
+            w.observer = obs;
+            _watchers.push(w);
             Logger.info("AlphaGuard: 接管", el.className || el.tagName);
         }
 
@@ -560,18 +629,44 @@
             });
         }
 
-        /** rAF 轮询：兜底检查（MutationObserver 极少情况下可能延迟） */
+        /**
+         * rAF 轮询：仅处理被 MutationObserver 标记为脏的 watcher
+         * 全部清洁时降级为 500ms 定时安全网，避免持续 60fps 空转
+         */
+        var _lastFullCheck = 0;
         function rafLoop() {
+            var now = Date.now();
+            var anyDirty = false;
+
             _watchers.forEach(function (w) {
-                if (document.contains(w.el)) {
-                    fixElement(w.el);
-                } else {
+                if (!document.contains(w.el)) {
                     w.observer.disconnect();
                     w._stale = true;
+                    return;
+                }
+                // 脏标记由 MutationObserver 回调设置，此处清除并修复
+                if (w._dirty) {
+                    w._dirty = false;
+                    fixElement(w.el);
+                    anyDirty = true;
                 }
             });
             _watchers = _watchers.filter(function (w) { return !w._stale; });
-            if (_active) _rafId = requestAnimationFrame(rafLoop);
+
+            if (!_active) return;
+
+            if (anyDirty) {
+                // 有脏 watcher → 继续高频轮询，确保快速响应
+                _rafId = requestAnimationFrame(rafLoop);
+            } else if (now - _lastFullCheck > 500) {
+                // 安全网：每 500ms 全量检查一次（应对 MO 遗漏的极端情况）
+                _lastFullCheck = now;
+                _watchers.forEach(function (w) { fixElement(w.el); });
+                _rafId = requestAnimationFrame(rafLoop);
+            } else {
+                // 全清洁 → 降频：500ms 后再检查
+                _rafId = setTimeout(rafLoop, 500);
+            }
         }
 
         /** 监听 DOM 结构变化（SPA 路由后元素重新插入） */
@@ -599,7 +694,7 @@
             },
             stop: function () {
                 _active = false;
-                if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; }
+                if (_rafId) { clearTimeout(_rafId); cancelAnimationFrame(_rafId); _rafId = null; }
                 _watchers.forEach(function (w) { w.observer.disconnect(); });
                 _watchers = [];
                 if (_rootObs) { _rootObs.disconnect(); _rootObs = null; }
@@ -629,10 +724,10 @@
      *   修复：由 SpacePageInjector 在 main.space-main 内部注入固定背景 div。
      */
     var ChainTransparifier = (function () {
-        var _savedMap = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+        var _savedMap = createWeakMap();
         var _savedEls = [];
         // per-element style attribute observers（防 Vue 直接重置 style）
-        var _styleGuards = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+        var _styleGuards = createWeakMap();
         var _styleGuardArr = [];
         // 全局 childList observer（检测新节点插入）
         var _waitObs = null;
@@ -666,7 +761,7 @@
                 // 有 background-image 的元素不干预
                 if (cs.backgroundImage && cs.backgroundImage !== "none") return;
                 var parts = parseColor(cs.backgroundColor);
-                if (parts[3] >= 0.05) {
+                if (parts[3] >= ALPHA_TRANSPARENT_THRESHOLD) {
                     // background 被重置为不透明 → 立即重新透明化
                     el.style.setProperty("background-color", "transparent", "important");
                 }
@@ -679,10 +774,12 @@
         function transparifyOne(el) {
             if (!el || el === document.documentElement || el === document.body) return;
             if (isProtected(el)) return;
+            // 已有 guard 且已透明的元素，跳过 getComputedStyle 开销
+            if (_styleGuards && _styleGuards.has(el)) return;
             var cs = window.getComputedStyle(el);
             if (cs.backgroundImage && cs.backgroundImage !== "none") return;
             var parts = parseColor(cs.backgroundColor);
-            if (parts[3] < 0.05) {
+            if (parts[3] < ALPHA_TRANSPARENT_THRESHOLD) {
                 // 已透明：仍需挂载 guard，防止之后被重置
                 ensureStyleGuard(el);
                 return;
@@ -717,7 +814,7 @@
 
         function scheduleRun() {
             clearTimeout(_debTimer);
-            _debTimer = setTimeout(runAll, 150);
+            _debTimer = setTimeout(runAll, 300);
         }
 
         return {
@@ -733,8 +830,9 @@
                         }
                     }
                 });
-                _waitObs.observe(document.body || document.documentElement,
-                    { childList: true, subtree: true });
+                // 监听范围缩小到 #app（B站/AcFun 主容器），避免全 body 回调风暴
+                var obsRoot = document.getElementById("app") || document.body || document.documentElement;
+                _waitObs.observe(obsRoot, { childList: true, subtree: true });
                 Logger.info("ChainTransparifier 已启动，锚点:",
                     (SITE_CONFIG.anchorSelectors || []).join(", ") || "（无）");
             },
@@ -744,7 +842,7 @@
                 if (_waitObs) { _waitObs.disconnect(); _waitObs = null; }
                 _styleGuardArr.forEach(function (o) { o.disconnect(); });
                 _styleGuardArr = [];
-                _styleGuards = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+                _styleGuards = createWeakMap();
                 _savedEls.forEach(function (el) {
                     if (!document.contains(el)) return;
                     var saved = _savedMap ? _savedMap.get(el) : null;
@@ -753,15 +851,15 @@
                     else el.style.removeProperty("background-color");
                 });
                 _savedEls = [];
-                _savedMap = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+                _savedMap = createWeakMap();
                 Logger.info("ChainTransparifier 已停止并还原");
             },
             rescan: function () {
                 _styleGuardArr.forEach(function (o) { o.disconnect(); });
                 _styleGuardArr = [];
-                _styleGuards = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+                _styleGuards = createWeakMap();
                 _savedEls = [];
-                _savedMap = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+                _savedMap = createWeakMap();
                 runAll();
                 Logger.info("ChainTransparifier 重新扫描");
             },
@@ -788,17 +886,11 @@
         var _oldMode = false;   // 是否已切换到旧版 #app 回退
         var _timer = null;
 
-        function esc(u) { return u.replace(/'/g, "\\'"); }
-
         /** 旧版回退：直接给 #app 设置 background-image inline style */
         function applyOldPage(url) {
             var app = document.getElementById("app");
             if (!app) return;
-            app.style.setProperty("background-image", "url('" + esc(url) + "')", "important");
-            app.style.setProperty("background-size", "cover", "important");
-            app.style.setProperty("background-position", "center top", "important");
-            app.style.setProperty("background-attachment", "fixed", "important");
-            app.style.setProperty("background-repeat", "no-repeat", "important");
+            applyBgStyle(app, url);
             _oldMode = true;
             Logger.info("SpacePageInjector: 旧版空间页，背景已注入 #app");
         }
@@ -807,9 +899,7 @@
         function clearOldPage() {
             var app = document.getElementById("app");
             if (!app || !_oldMode) return;
-            ["background-image", "background-size", "background-position",
-                "background-attachment", "background-repeat"]
-                .forEach(function (p) { app.style.removeProperty(p); });
+            clearBgStyle(app);
             _oldMode = false;
         }
 
@@ -1029,11 +1119,9 @@
     })();
 
     // ============================================================
-    // UI MODULE
+    // UI STYLES（独立常量，便于维护和主题切换）
     // ============================================================
-    var UIModule = (function () {
-
-        var CSS = [
+    var UI_STYLES = [
             "#skbg-hot{position:fixed;bottom:0;left:0;z-index:2147483646;",
             "width:12px;height:100vh;pointer-events:auto;}",
 
@@ -1176,6 +1264,106 @@
             "#skbg-toast.error{background:linear-gradient(135deg,#ff6b6b,#ff9999);}",
         ].join("");
 
+    // ============================================================
+    // UI TEMPLATE（HTML 模板独立提取，便于 UI 结构调整）
+    // ============================================================
+    var UI_TEMPLATE = [
+        '<div id="skbg-hot" aria-hidden="true"></div>',
+        '<div id="skbg-trigger" role="button" tabindex="0"',
+        '  aria-label="打开背景面板" title="更换背景">',
+        '  <span id="skbg-trigger-icon">🌸</span>',
+        '  <span id="skbg-trigger-label">背景</span>',
+        '</div>',
+
+        '<div id="skbg-panel" role="dialog" aria-label="背景更换面板">',
+
+        '<div id="skbg-header">',
+        '  <span id="skbg-title">🌸 背景更换</span>',
+        '  <button id="skbg-close" aria-label="关闭">✕</button>',
+        '</div>',
+
+        '<div id="skbg-author-bar">',
+        '  <a href="', AUTHOR.bilibili, '" target="_blank" rel="noopener">',
+        '    <img class="site-icon"',
+        '         src="https://www.bilibili.com/favicon.ico" alt="B站"',
+        '         onerror="this.style.display=\'none\'">',
+        '    <span>@SakuraMikku</span>',
+        '  </a>',
+        '  <a href="', AUTHOR.github, '" target="_blank" rel="noopener">',
+        '    <img class="site-icon"',
+        '         src="https://github.com/favicon.ico" alt="GitHub"',
+        '         onerror="this.style.display=\'none\'">',
+        '    <span>GitHub</span>',
+        '  </a>',
+        '</div>',
+
+        '<div id="skbg-tabs" role="tablist">',
+        '  <div class="skbg-tab active" role="tab" data-tab="gallery">图库</div>',
+        '  <div class="skbg-tab" role="tab" data-tab="url">链接</div>',
+        '  <div class="skbg-tab" role="tab" data-tab="local">本地</div>',
+        '  <div class="skbg-tab" role="tab" data-tab="settings">设置</div>',
+        '</div>',
+
+        '<div id="skbg-content">',
+
+        '<div id="skbg-pane-gallery" class="skbg-pane active" role="tabpanel">',
+        '  <div id="skbg-gallery-grid"></div>',
+        '  <button id="skbg-gallery-refresh" style="display:none">↻ 刷新远程图库</button>',
+        '</div>',
+
+        '<div id="skbg-pane-url" class="skbg-pane" role="tabpanel">',
+        '  <div class="skbg-lbl">输入图片地址</div>',
+        '  <div class="skbg-row">',
+        '    <input id="skbg-url-inp" class="skbg-input" type="url"',
+        '           placeholder="https://example.com/bg.jpg" autocomplete="off">',
+        '  </div>',
+        '  <button id="skbg-url-apply" class="skbg-btn" style="width:100%">应用背景</button>',
+        '</div>',
+
+        '<div id="skbg-pane-local" class="skbg-pane" role="tabpanel">',
+        '  <div class="skbg-lbl">拖拽或选择图片</div>',
+        '  <div id="skbg-drop">',
+        '    <span class="di">🖼️</span>点击或拖拽图片至此',
+        '    <input id="skbg-file-inp" type="file" accept="image/*">',
+        '  </div>',
+        '  <div id="skbg-file-prev"><img src="" alt="预览"></div>',
+        '  <button id="skbg-local-apply" class="skbg-btn"',
+        '          style="width:100%;margin-top:10px;display:none">应用该图片</button>',
+        '</div>',
+
+        '<div id="skbg-pane-settings" class="skbg-pane" role="tabpanel">',
+        '  <div class="skbg-lbl">当前背景预览</div>',
+        '  <div id="skbg-cur-prev">暂无背景</div>',
+        '  <div class="skbg-lbl">背景显现程度</div>',
+        '  <div id="skbg-opacity-row">',
+        '    <input id="skbg-opacity-slider" type="range" min="0" max="100" value="100">',
+        '    <span id="skbg-opacity-val">100%</span>',
+        '  </div>',
+        '  <button id="skbg-del-btn" class="skbg-btn danger"',
+        '          style="width:100%">清除背景存储</button>',
+        '  <div class="skbg-lbl" style="margin-top:14px">关于</div>',
+        '  <div class="skbg-about">',
+        '    <strong>SakuraBG v3.0.4</strong>',
+        '    &nbsp;·&nbsp; 作者 <a href="', AUTHOR.bilibili, '" target="_blank">SakuraMikku</a><br>',
+        '    <a href="', AUTHOR.github, '" target="_blank">GitHub</a>',
+        '    &nbsp;·&nbsp; QQ群：', AUTHOR.qqGroup, '<br>',
+        '    当前页面：', escHtml(location.host + location.pathname),
+        '  </div>',
+        '  <button id="skbg-help-btn" class="skbg-btn secondary"',
+        '          style="width:100%;margin-top:10px">查看使用说明</button>',
+        '</div>',
+
+        '</div>',
+        '</div>',
+
+        '<div id="skbg-toast" role="alert" aria-live="polite"></div>',
+    ].join("");
+
+    // ============================================================
+    // UI MODULE
+    // ============================================================
+    var UIModule = (function () {
+
         var _open = false, _tab = "gallery", _b64 = null;
         var _toastTmr = null, _galleryLoaded = false;
         // 透明度：0=内容完全不透明(背景不可见), 1=内容完全透明(背景完全显示)
@@ -1248,8 +1436,7 @@
             grid.innerHTML = ""; grid.appendChild(frag); _galleryLoaded = true;
 
             grid.onclick = function (e) {
-                var item = e.target.closest ? e.target.closest(".skbg-gi")
-                    : (function (el) { while (el && !el.classList.contains("skbg-gi")) el = el.parentNode; return el; })(e.target);
+                var item = closest(e.target, ".skbg-gi");
                 if (!item) return;
                 applyAndSave(item.dataset.url);
             };
@@ -1285,97 +1472,7 @@
         function buildHTML() {
             var w = document.createElement("div");
             w.id = "skbg-root";
-            w.innerHTML = [
-                '<div id="skbg-hot" aria-hidden="true"></div>',
-                '<div id="skbg-trigger" role="button" tabindex="0"',
-                '  aria-label="打开背景面板" title="更换背景">',
-                '  <span id="skbg-trigger-icon">🌸</span>',
-                '  <span id="skbg-trigger-label">背景</span>',
-                '</div>',
-
-                '<div id="skbg-panel" role="dialog" aria-label="背景更换面板">',
-
-                '<div id="skbg-header">',
-                '  <span id="skbg-title">🌸 背景更换</span>',
-                '  <button id="skbg-close" aria-label="关闭">✕</button>',
-                '</div>',
-
-                '<div id="skbg-author-bar">',
-                '  <a href="', AUTHOR.bilibili, '" target="_blank" rel="noopener">',
-                '    <img class="site-icon"',
-                '         src="https://www.bilibili.com/favicon.ico" alt="B站"',
-                '         onerror="this.style.display=\'none\'">',
-                '    <span>@SakuraMikku</span>',
-                '  </a>',
-                '  <a href="', AUTHOR.github, '" target="_blank" rel="noopener">',
-                '    <img class="site-icon"',
-                '         src="https://github.com/favicon.ico" alt="GitHub"',
-                '         onerror="this.style.display=\'none\'">',
-                '    <span>GitHub</span>',
-                '  </a>',
-                '</div>',
-
-                '<div id="skbg-tabs" role="tablist">',
-                '  <div class="skbg-tab active" role="tab" data-tab="gallery">图库</div>',
-                '  <div class="skbg-tab" role="tab" data-tab="url">链接</div>',
-                '  <div class="skbg-tab" role="tab" data-tab="local">本地</div>',
-                '  <div class="skbg-tab" role="tab" data-tab="settings">设置</div>',
-                '</div>',
-
-                '<div id="skbg-content">',
-
-                '<div id="skbg-pane-gallery" class="skbg-pane active" role="tabpanel">',
-                '  <div id="skbg-gallery-grid"></div>',
-                '  <button id="skbg-gallery-refresh" style="display:none">↻ 刷新远程图库</button>',
-                '</div>',
-
-                '<div id="skbg-pane-url" class="skbg-pane" role="tabpanel">',
-                '  <div class="skbg-lbl">输入图片地址</div>',
-                '  <div class="skbg-row">',
-                '    <input id="skbg-url-inp" class="skbg-input" type="url"',
-                '           placeholder="https://example.com/bg.jpg" autocomplete="off">',
-                '  </div>',
-                '  <button id="skbg-url-apply" class="skbg-btn" style="width:100%">应用背景</button>',
-                '</div>',
-
-                '<div id="skbg-pane-local" class="skbg-pane" role="tabpanel">',
-                '  <div class="skbg-lbl">拖拽或选择图片</div>',
-                '  <div id="skbg-drop">',
-                '    <span class="di">🖼️</span>点击或拖拽图片至此',
-                '    <input id="skbg-file-inp" type="file" accept="image/*">',
-                '  </div>',
-                '  <div id="skbg-file-prev"><img src="" alt="预览"></div>',
-                '  <button id="skbg-local-apply" class="skbg-btn"',
-                '          style="width:100%;margin-top:10px;display:none">应用该图片</button>',
-                '</div>',
-
-                '<div id="skbg-pane-settings" class="skbg-pane" role="tabpanel">',
-                '  <div class="skbg-lbl">当前背景预览</div>',
-                '  <div id="skbg-cur-prev">暂无背景</div>',
-                '  <div class="skbg-lbl">背景显现程度</div>',
-                '  <div id="skbg-opacity-row">',
-                '    <input id="skbg-opacity-slider" type="range" min="0" max="100" value="100">',
-                '    <span id="skbg-opacity-val">100%</span>',
-                '  </div>',
-                '  <button id="skbg-del-btn" class="skbg-btn danger"',
-                '          style="width:100%">清除背景存储</button>',
-                '  <div class="skbg-lbl" style="margin-top:14px">关于</div>',
-                '  <div class="skbg-about">',
-                '    <strong>SakuraBG v3.0.4</strong>',
-                '    &nbsp;·&nbsp; 作者 <a href="', AUTHOR.bilibili, '" target="_blank">SakuraMikku</a><br>',
-                '    <a href="', AUTHOR.github, '" target="_blank">GitHub</a>',
-                '    &nbsp;·&nbsp; QQ群：', AUTHOR.qqGroup, '<br>',
-                '    当前页面：', escHtml(location.host + location.pathname),
-                '  </div>',
-                '  <button id="skbg-help-btn" class="skbg-btn secondary"',
-                '          style="width:100%;margin-top:10px">查看使用说明</button>',
-                '</div>',
-
-                '</div>',
-                '</div>',
-
-                '<div id="skbg-toast" role="alert" aria-live="polite"></div>',
-            ].join("");
+            w.innerHTML = UI_TEMPLATE;
             document.body.appendChild(w);
         }
 
@@ -1401,8 +1498,7 @@
             $id("skbg-close").addEventListener("click", function () { setPanelOpen(false); });
 
             $id("skbg-tabs").addEventListener("click", function (e) {
-                var t = e.target.closest ? e.target.closest(".skbg-tab")
-                    : (function (el) { while (el && !el.classList.contains("skbg-tab")) el = el.parentNode; return el; })(e.target);
+                var t = closest(e.target, ".skbg-tab");
                 if (t && t.dataset.tab) switchTab(t.dataset.tab);
             });
 
@@ -1489,10 +1585,10 @@
 
         function injectCSS() {
             if (typeof GM_addStyle !== "undefined") {
-                GM_addStyle(CSS);
+                GM_addStyle(UI_STYLES);
             } else {
                 var s = document.createElement("style");
-                s.textContent = CSS;
+                s.textContent = UI_STYLES;
                 (document.head || document.documentElement).appendChild(s);
             }
         }
